@@ -5,8 +5,7 @@ This project demonstrates a simple CAN-based communication application utilizing
 
 ### Hardware Setup
 - **Arduino UNO (Sender)**
-- **MCP2515 Transceiver**
-- **MCP2515 Transceiver**
+- **2 MCP2515 Transceivers**
 - **ESP32 (Receiver)**
 
 ### Libraries Used
