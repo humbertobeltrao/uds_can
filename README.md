@@ -1,4 +1,4 @@
-## CAN-based Communication Application using UDS Protocol
+## CAN via UDS Protocol
 
 ### Overview
 This project demonstrates a simple CAN-based communication application utilizing the UDS protocol.
