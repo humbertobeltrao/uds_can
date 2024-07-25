@@ -4,9 +4,11 @@
 const int SPI_CS_PIN = 10;
 MCP_CAN CAN(SPI_CS_PIN);
 
-const unsigned long totalBytes = 1048; // 10MB
+const unsigned long totalBytes = 237568; // 240KB
 unsigned long bytesSent = 0;
 bool dataTransferStarted = false;
+const int bufferSize = 8;
+char buffer[bufferSize];
 
 void setup() {
     Serial.begin(115200);
@@ -21,7 +23,6 @@ void setup() {
     CAN.setMode(MCP_NORMAL);  // Set operation mode to normal so the MCP2515 sends acks
 
     sendUDSRequest();
-
 }
 
 void loop() {
@@ -30,15 +31,15 @@ void loop() {
         receiveUDSResponse();
     } else {
         // Data transfer loop
-        if (bytesSent < totalBytes) {
-            unsigned char stmp[8] = {'D', 'A', 'T', 'A', 'B', 'L', 'K', '1'}; // Simulated data block
-            CAN.sendMsgBuf(0x00, 0, 8, stmp);
-            bytesSent += 8;
+        if (Serial.available() >= bufferSize) {
+            Serial.readBytes(buffer, bufferSize);
+            CAN.sendMsgBuf(0x00, 0, bufferSize, (byte *)buffer);
+            bytesSent += bufferSize;
 
-            // Serial.print("Bytes sent: ");
-            // Serial.println(bytesSent);
-        } else {
-            Serial.println("File transfer complete!");
+            Serial.print("Bytes sent: ");
+            Serial.println(bytesSent);
+        } else if (bytesSent >= totalBytes) {
+            sendEOFMessage();  // Send the EOF message
             bytesSent = 0;
             while (1); // Stop sending after file transfer is complete
         }
@@ -46,12 +47,21 @@ void loop() {
         delay(100); // Short delay to control the send rate
     }
 }
+
 void sendUDSRequest() {
     // Example UDS Start Diagnostic Session request
     unsigned char udsRequest[8] = {0x02, 0x10, 0x01}; // Diagnostic Session Control (0x10), Default Session (0x01)
     CAN.sendMsgBuf(0x7DF, 0, 3, udsRequest);
-    Serial.println("UDS Request sent");
+    Serial.println("UDS Diagnostic Control Session Request sent");
 }
+
+void sendUDSCommunicationControlRequest() {
+    // Example UDS Start Diagnostic Session request
+    unsigned char udsRequest[8] = {0x02, 0x31, 0x01}; // Communication Control (0x31), Default Session (0x01)
+    CAN.sendMsgBuf(0x7DF, 0, 3, udsRequest);
+    Serial.println("UDS CommunicationControl Request sent");
+}
+
 
 void receiveUDSResponse() {
     unsigned char len = 0;
@@ -66,9 +76,20 @@ void receiveUDSResponse() {
             Serial.println("UDS Response received");
             // Check UDS response and set dataTransferStarted to true if valid
             if (buf[0] == 0x03 && buf[1] == 0x50 && buf[2] == 0x01) {
-                dataTransferStarted = true;
-                Serial.println("UDS Response valid, starting data transfer");
+                //dataTransferStarted = true;
+                Serial.println("UDS Diagnostic Control Session Response valid, sending communication control request...");
+                sendUDSCommunicationControlRequest();
+            } else if (buf[0] == 0x03 && buf[1] == 0x71 && buf[2] == 0x01) {
+              dataTransferStarted = true;
+              Serial.println("UDS Communication Control Response valid, starting data transfer");
             }
         }
     }
+}
+
+void sendEOFMessage() {
+    // Example EOF indicator message
+    unsigned char eofMessage[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED, 0xBA, 0xAD}; // Special sequence of bytes
+    CAN.sendMsgBuf(0x00, 0, 8, eofMessage);
+    Serial.println("EOF message sent");
 }
