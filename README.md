@@ -1,7 +1,7 @@
 ## CAN via UDS Protocol
 
 ### Overview
-This project demonstrates a simple CAN-based communication application utilizing the UDS protocol.
+This project demonstrates a simple CAN-based communication application utilizing the UDS protocol. The goal also includes flashing the target hardware using the OTA approach.
 
 ### Hardware Setup
 - **Arduino UNO (Sender)**
