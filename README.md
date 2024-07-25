@@ -1,4 +1,4 @@
-## CAN via UDS Protocol
+## ESP32 OTA Update using UDS and CAN-based communication
 
 ### Overview
 This project demonstrates a simple CAN-based communication application utilizing the UDS protocol. The goal also includes flashing the target hardware using the OTA approach.
