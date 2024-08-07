@@ -4,7 +4,7 @@
 This project demonstrates a simple CAN-based communication application utilizing the UDS protocol. The goal also includes flashing the target hardware using the OTA approach.
 
 ### Hardware Setup
-- **Arduino UNO (Sender)**
+- **Arduino UNO (Sender)** or ESP32 (check the sender_esp file)
 - **2 MCP2515 Transceivers**
 - **ESP32 (Receiver)**
 
