@@ -1,30 +1,77 @@
 #include <SPI.h>
 #include <mcp_can.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <LittleFS.h>
 
-// Define the CS pin for MCP2515
+// WiFi credentials
+const char* ssid = "";
+const char* password = "";
+
+// CAN setup
 const int SPI_CS_PIN = 5;
 MCP_CAN CAN(SPI_CS_PIN); // Create a CAN object
 
-const unsigned long totalBytes = 237568; // 240KB
 unsigned long bytesSent = 0;
 bool dataTransferStarted = false;
 const int bufferSize = 8;
 char buffer[bufferSize];
 
+// Web server setup
+AsyncWebServer server(80);
+File fsUploadFile;
+String fileName;
+
 void setup() {
     Serial.begin(115200);
+     Serial.begin(115200);
+
+    // Attempt to mount LittleFS
+    if (!LittleFS.begin()) {
+        Serial.println("Failed to mount LittleFS. Formatting...");
+        // Attempt to format the filesystem
+        if (LittleFS.format()) {
+            Serial.println("LittleFS formatted successfully. Mounting...");
+            if (!LittleFS.begin()) {
+                Serial.println("Failed to mount LittleFS after formatting");
+                return;
+            }
+        } else {
+            Serial.println("LittleFS format failed");
+            return;
+        }
+    }
+
+    // Initialize LittleFS
+    if (!LittleFS.begin()) {
+        Serial.println("An Error has occurred while mounting LittleFS");
+        return;
+    }
+
+    // Connect to WiFi
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.println("Connecting to WiFi...");
+    }
+    Serial.println("Connected to WiFi");
+    Serial.println(WiFi.localIP());
+
+    // Route for file upload
+    server.on("/upload", HTTP_POST, [](AsyncWebServerRequest * request) {
+      request->send(200);
+    }, handleUpload);
+  
+    server.begin();
 
     // Initialize the MCP2515 CAN controller
     if (CAN.begin(MCP_ANY, CAN_500KBPS, MCP_8MHZ) == CAN_OK) {
-        Serial.println("CAN BUS Shield init ok!");
+      Serial.println("CAN BUS Shield init ok!");
     } else {
-        Serial.println("CAN BUS Shield init fail");
-        while (1);
+      Serial.println("CAN BUS Shield init fail");
+      while (1);
     }
-
     CAN.setMode(MCP_NORMAL); // Set operation mode to normal
-
-    sendUDSExtendedDiagnosticSessionRequest();
 }
 
 void loop() {
@@ -33,32 +80,32 @@ void loop() {
         receiveUDSResponse();
     } else {
         // Data transfer loop
-        if (Serial.available() >= bufferSize) {
-            Serial.readBytes(buffer, bufferSize);
-            CAN.sendMsgBuf(0x00, 0, bufferSize, (byte *)buffer);
-            bytesSent += bufferSize;
-
-            Serial.print("Bytes sent: ");
-            Serial.println(bytesSent);
-        } else if (bytesSent >= totalBytes) {
-            sendEOFMessage(); // Send the EOF message
-            bytesSent = 0;
-            while (1); // Stop sending after file transfer is complete
+        File file = LittleFS.open("/" + fileName, FILE_READ);
+        if (!file) {
+            Serial.println("Failed to open file for reading");
+            return;
         }
 
-        delay(100); // Short delay to control the send rate
+        while (file.available()) {
+            int len = file.readBytes(buffer, bufferSize);
+            CAN.sendMsgBuf(0x00, 0, len, (byte *)buffer);
+            bytesSent += len;
+            delay(100); // Short delay to control the send rate
+        }
+
+        file.close();
+        sendEOFMessage(); // Send the EOF message
+        dataTransferStarted = false;
     }
 }
 
 void sendUDSProgrammingSessionRequest() {
-    // Example UDS Start Diagnostic Session request
     byte udsRequest[3] = {0x02, 0x10, 0x01}; // Diagnostic Session Control (0x10), Default Session (0x01)
     CAN.sendMsgBuf(0x7DF, 0, 3, udsRequest);
     Serial.println("UDS Programming Session Request sent");
 }
 
 void sendUDSExtendedDiagnosticSessionRequest() {
-    // Example UDS Start Diagnostic Session request
     byte udsRequest[3] = {0x03, 0x10, 0x01}; // Diagnostic Session Control (0x10), Default Session (0x01)
     CAN.sendMsgBuf(0x7DF, 0, 3, udsRequest);
     Serial.println("UDS Extended Diagnostic Session Request sent");
@@ -71,7 +118,6 @@ void sendUDSControlDTCSettingRequest() {
 }
 
 void sendUDSCommunicationControlRequest() {
-    // Example UDS Start Diagnostic Session request
     byte udsRequest[3] = {0x02, 0x31, 0x01}; // Communication Control (0x31), Default Session (0x01)
     CAN.sendMsgBuf(0x7DF, 0, 3, udsRequest);
     Serial.println("UDS Communication Control Request sent");
@@ -98,7 +144,7 @@ void receiveUDSResponse() {
             } else if (buf[0] == 0x02 && buf[1] == 0x50 && buf[2] == 0x01) {
                 Serial.println("UDS Programming Session Response valid, sending communication control request...");
                 sendUDSCommunicationControlRequest();
-            } else if (buf[0] == 0x03 && buf[1] == 0x71 && buf[2] == 0x01) {
+            } else if (buf[0] == 0x71 && buf[1] == 0x03 && buf[2] == 0x01) {
                 dataTransferStarted = true;
                 Serial.println("UDS Communication Control Response valid, starting file transfer...");
             }
@@ -107,8 +153,26 @@ void receiveUDSResponse() {
 }
 
 void sendEOFMessage() {
-    // Example EOF indicator message
     byte eofMessage[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED, 0xBA, 0xAD}; // Special sequence of bytes
     CAN.sendMsgBuf(0x00, 0, 8, eofMessage);
     Serial.println("EOF message sent");
+}
+
+void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+  if (!index) {
+    fileName = filename;
+    Serial.printf("UploadStart: %s\n", fileName.c_str());
+    fsUploadFile = LittleFS.open("/" + fileName, "w");
+  }
+  if (fsUploadFile) {
+    fsUploadFile.write(data, len);
+  }
+  if (final) {
+    Serial.printf("UploadEnd: %s, %u B\n", fileName.c_str(), index + len);
+    sendUDSExtendedDiagnosticSessionRequest();
+    if (fsUploadFile) {
+      fsUploadFile.close();
+      fsUploadFile = LittleFS.open("/" + fileName, "r");
+    }
+  }
 }
