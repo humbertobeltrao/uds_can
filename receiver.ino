@@ -7,14 +7,14 @@
 struct can_frame canMsg;
 MCP2515 mcp2515(5);
 
-const unsigned long expectedFileSize = 237568; // Expected 240KB file size
+//const unsigned long expectedFileSize = 237568; // Expected 240KB file size
 unsigned long bytesReceived = 0;
 unsigned long startTime = 0;
 unsigned long endTime = 0;
 bool timingStarted = false;
 bool dataTransferStarted = false;
 File binFile;
-bool eofReceived = false;
+bool eofReceived = false;'
 
 void setup() {
     Serial.begin(115200);
@@ -29,12 +29,12 @@ void setup() {
     mcp2515.setNormalMode();
 
     Serial.println("MCP2515 Initialized Successfully!");
-
-    binFile = SPIFFS.open("/test_blink_500.bin", FILE_WRITE);
+    binFile = SPIFFS.open("/test.bin", FILE_WRITE);
     if (!binFile) {
         Serial.println("Failed to open file for writing");
         return;
     }
+
 }
 
 void loop() {
@@ -79,7 +79,7 @@ void receiveData() {
     Serial.println(" seconds");
 
     // Verify the actual file size
-    File receivedFile = SPIFFS.open("/test_blink.bin", FILE_READ);
+    File receivedFile = SPIFFS.open("/test.bin", FILE_READ);
     if (receivedFile) {
         unsigned long actualFileSize = receivedFile.size();
         Serial.print("Actual file size received: ");
@@ -100,21 +100,36 @@ void receiveData() {
 void receiveUDSRequest() {
     if (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
         if (canMsg.can_id == 0x7DF) {
-            //Serial.println("UDS Request received");
-            if (canMsg.data[0] == 0x02 && canMsg.data[1] == 0x10 && canMsg.data[2] == 0x01) {
-                sendUDSResponse();
-                //dataTransferStarted = true;
-                Serial.println("UDS Diagnostic Control Session Request valid, sending response...");
+            if (canMsg.data[0] == 0x03 && canMsg.data[1] == 0x10 && canMsg.data[2] == 0x01) {
+                sendUDSExtendedSessionResponse();
+                Serial.println("UDS Extended Diagnostic Session Session Request valid, sending response...");
+            } else if (canMsg.data[0] == 0x85 && canMsg.data[1] == 0x02 && canMsg.data[2] == 0x01) {
+                sendUDSControlDTCSettingResponse();
+                Serial.println("UDS ControlDTCSetting Request valid, sending response...");
+            } else if(canMsg.data[0] == 0x02 && canMsg.data[1] == 0x10 && canMsg.data[2] == 0x01) {
+                sendUDSProgrammingSessionResponse();
+                Serial.println("UDS Programming Session Request valid, sending response...");
             } else if (canMsg.data[0] == 0x02 && canMsg.data[1] == 0x31 && canMsg.data[2] == 0x01) {
-                sendUDSCommunicationControlResponse();
+                //formatSPIFFS();
                 dataTransferStarted = true;
-                Serial.println("UDS Communication Control Request valid, sending communication control response...");
+                sendUDSEraseMemoryResponse();
+                Serial.println("UDS Erase Memory Request valid, performing erase...");
             }
         }
     }
 }
 
-void sendUDSResponse() {
+void sendUDSProgrammingSessionResponse() {
+    unsigned char udsResponse[8] = {0x02, 0x50, 0x01};
+    canMsg.can_id = 0x7E8;
+    canMsg.can_dlc = 3;
+    memcpy(canMsg.data, udsResponse, 3);
+
+    mcp2515.sendMessage(&canMsg);
+    Serial.println("UDS Response sent");
+}
+
+void sendUDSExtendedSessionResponse() {
     unsigned char udsResponse[8] = {0x03, 0x50, 0x01};
     canMsg.can_id = 0x7E8;
     canMsg.can_dlc = 3;
@@ -124,20 +139,46 @@ void sendUDSResponse() {
     Serial.println("UDS Response sent");
 }
 
-void sendUDSCommunicationControlResponse() {
-    unsigned char udsResponse[8] = {0x03, 0x71, 0x01};
+void sendUDSControlDTCSettingResponse() {
+    unsigned char udsResponse[8] = {0xC5, 0x02, 0x01};
     canMsg.can_id = 0x7E8;
     canMsg.can_dlc = 3;
     memcpy(canMsg.data, udsResponse, 3);
 
     mcp2515.sendMessage(&canMsg);
-    Serial.println("UDS Communication Control Response sent");
+    Serial.println("UDS Control DTC Setting Response sent");
+}
+
+void sendUDSEraseMemoryResponse() {
+    unsigned char udsResponse[8] = {0x71, 0x03, 0x01};
+    canMsg.can_id = 0x7E8;
+    canMsg.can_dlc = 3;
+    memcpy(canMsg.data, udsResponse, 3);
+
+    mcp2515.sendMessage(&canMsg);
+    Serial.println("UDS Memory Erase Response sent");
+}
+
+void formatSPIFFS() {
+    if (!SPIFFS.begin(true)) { // true parameter will format the filesystem if it's corrupted
+        Serial.println("An Error has occurred while mounting SPIFFS");
+        return;
+    }
+    Serial.println("SPIFFS mounted successfully");
+
+    if (SPIFFS.format()) {
+        delay(15000);
+        Serial.println("SPIFFS formatted successfully");
+        sendUDSEraseMemoryResponse();
+    } else {
+        Serial.println("SPIFFS formatting failed");
+    }
 }
 
 void flashESP32() {
     Serial.println("Starting ESP32 flash process...");
 
-    File updateBin = SPIFFS.open("/test_blink.bin", FILE_READ);
+    File updateBin = SPIFFS.open("/test.bin", FILE_READ);
     if (!updateBin) {
         Serial.println("Failed to open bin file for reading");
         return;
@@ -168,4 +209,3 @@ void flashESP32() {
     }
     updateBin.close();
 }
-   
