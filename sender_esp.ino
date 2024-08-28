@@ -94,7 +94,7 @@ void loop() {
         }
 
         file.close();
-        sendEOFMessage(); // Send the EOF message
+        sendUDSTransferExitRequest(); // Send the EOF message
         dataTransferStarted = false;
     }
 }
@@ -123,6 +123,18 @@ void sendUDSCommunicationControlRequest() {
     Serial.println("UDS Communication Control Request sent");
 }
 
+void sendUDSSecurityAccessRequest() {
+    byte udsRequest[2] = {0x02, 0x27}; // Request seed for Security Access
+    CAN.sendMsgBuf(0x7DF, 0, 2, udsRequest);
+    Serial.println("UDS Security Access Request sent");
+}
+
+void sendUDSSecurityAccessKeyResponse(byte* key) {
+    byte udsRequest[8] = {0x06, 0x27, 0x02, key[0], key[1], key[2], key[3]}; // Send the generated key
+    CAN.sendMsgBuf(0x7DF, 0, 8, udsRequest);
+    Serial.println("UDS Security Access Key Response sent");
+}
+
 void receiveUDSResponse() {
     unsigned char len = 0;
     unsigned char buf[8];
@@ -142,7 +154,16 @@ void receiveUDSResponse() {
                 Serial.println("UDS Control DTC Response valid, sending programming session control request...");
                 sendUDSProgrammingSessionRequest();
             } else if (buf[0] == 0x02 && buf[1] == 0x50 && buf[2] == 0x01) {
-                Serial.println("UDS Programming Session Response valid, sending communication control request...");
+                 sendUDSSecurityAccessRequest();
+            } else if (buf[0] == 0x67 && buf[1] == 0x01) {
+                  Serial.println("UDS Security Access Seed received");
+                
+                  byte key[4];
+                  generateSecurityKey(buf + 2, key); // Generate key using the received seed
+                  sendUDSSecurityAccessKeyResponse(key);
+                  
+            } else if (buf[0] == 0x03 && buf[1] == 0x67) {
+                Serial.println("UDS Security Access Seed Response valid, sending communication control request...");
                 sendUDSCommunicationControlRequest();
             } else if (buf[0] == 0x71 && buf[1] == 0x03 && buf[2] == 0x01) {
                 dataTransferStarted = true;
@@ -152,10 +173,12 @@ void receiveUDSResponse() {
     }
 }
 
-void sendEOFMessage() {
-    byte eofMessage[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED, 0xBA, 0xAD}; // Special sequence of bytes
-    CAN.sendMsgBuf(0x00, 0, 8, eofMessage);
-    Serial.println("EOF message sent");
+void sendUDSTransferExitRequest() {
+    //byte eofMessage[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED, 0xBA, 0xAD}; // Special sequence of bytes
+    byte udsRequest[3] = {0x37, 0x02, 0x01};
+    CAN.sendMsgBuf(0x00, 0, 3, udsRequest);
+    //Serial.println("EOF message sent");
+    Serial.println("UDS Transfer and Exit request sent");
 }
 
 void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
@@ -175,4 +198,12 @@ void handleUpload(AsyncWebServerRequest *request, String filename, size_t index,
       fsUploadFile = LittleFS.open("/" + fileName, "r");
     }
   }
+}
+
+void generateSecurityKey(byte* seed, byte* key) {
+    // Implement your key generation logic based on the seed
+    // This is a placeholder example; the actual algorithm will depend on your security requirements
+    for (int i = 0; i < 4; i++) {
+        key[i] = seed[i] + 1; // Simple example; replace with real algorithm
+    }
 }
