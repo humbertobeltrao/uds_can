@@ -1,0 +1,12 @@
+[
+ {
+      "version": "https://raw.githubusercontent.com/humbertobeltrao/bbb_xenomai/main/versions/bin-version500.txt",
+      "url" : "https://raw.githubusercontent.com/humbertobeltrao/",
+      "display_version": "v1.0"
+    },
+    {
+      "version": "https://raw.githubusercontent.com/humbertobeltrao/bbb_xenomai/main/versions/bin-version3000.txt",
+      "url" : "https://raw.githubusercontent.com/humbertobeltrao/",
+      "display_version": "v5.0"
+    }
+]
