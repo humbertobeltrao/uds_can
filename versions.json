@@ -1,12 +1,10 @@
 [
  {
-      "version": "https://raw.githubusercontent.com/humbertobeltrao/bbb_xenomai/main/versions/bin-version500.txt",
-      "url" : "https://raw.githubusercontent.com/humbertobeltrao/",
+      "url" : "https://raw.githubusercontent.com/humbertobeltrao/uds_can/blob/main/contents/test_blink_100.bin",
       "display_version": "v1.0"
     },
     {
-      "version": "https://raw.githubusercontent.com/humbertobeltrao/bbb_xenomai/main/versions/bin-version3000.txt",
-      "url" : "https://raw.githubusercontent.com/humbertobeltrao/",
+      "url" : "https://raw.githubusercontent.com/humbertobeltrao/uds_can/blob/main/contents/test_blink_500.bin",
       "display_version": "v5.0"
     }
 ]
