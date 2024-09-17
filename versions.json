@@ -1,0 +1,20 @@
+{
+  "firmware_versions" : [
+    {
+      "url" : "https://raw.githubusercontent.com/humbertobeltrao/uds_can/main/contents/test_blink_500.bin",
+      "display_version": "v500k"
+    },
+    {
+      "url" : "https://raw.githubusercontent.com/humbertobeltrao/uds_can/main/contents/1MB_file.bin",
+      "display_version": "v1M"
+    },
+    {
+      "url" : "https://raw.githubusercontent.com/humbertobeltrao/uds_can/main/contents/10MB_file.bin",
+      "display_version": "v10M"
+    },
+    {
+      "url" : "https://raw.githubusercontent.com/humbertobeltrao/uds_can/main/contents/20MB_file.bin",
+      "display_version": "v20M"
+    }
+  ]
+}
