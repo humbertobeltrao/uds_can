@@ -7,7 +7,8 @@ This project demonstrates a simple CAN-based communication application utilizing
 ### Hardware Setup
 - **2 ESP32s dev toolkit for establishing UDS-based communication (_client.ino_ and _receiver.ino_ files, respectively)**
 - **2 MCP2515 Transceivers**
-- **ESP32 (Receiver)**
+- **1 SD Card module**
+- Wiring setup described on each code file
 
 ### Libraries Used
 - mcp_can.h
