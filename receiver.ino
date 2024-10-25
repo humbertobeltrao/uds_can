@@ -1,13 +1,20 @@
 #include <SPI.h>
-#include <mcp2515.h>
+#include <mcp_can.h>
 #include <FS.h>
 #include <SPIFFS.h>
 #include <Update.h>
 
-struct can_frame canMsg;
-MCP2515 mcp2515(5);
 
-//const unsigned long expectedFileSize = 237568; // Expected 240KB file size
+#define CAN_SCK 14
+#define CAN_MISO 12
+#define CAN_MOSI 13
+#define CAN_CS 5
+
+MCP_CAN CAN(CAN_CS);         // MCP2515 instance
+
+File firmwareFile;             // File object to write to SPIFFS
+bool transferComplete = false;
+
 unsigned long bytesReceived = 0;
 unsigned long startTime = 0;
 unsigned long endTime = 0;
@@ -24,67 +31,52 @@ void setup() {
         return;
     }
 
-    mcp2515.reset();
-    mcp2515.setBitrate(CAN_500KBPS, MCP_8MHZ);
-    mcp2515.setNormalMode();
+    // Initialize MCP2515 CAN on HSPI
+    SPI.begin(CAN_SCK, CAN_MISO, CAN_MOSI, CAN_CS);  // Initialize HSPI
+    if (CAN.begin(MCP_STDEXT, CAN_500KBPS, MCP_8MHZ) == CAN_OK) {
+      Serial.println("CAN Bus initialized on HSPI");
+      CAN.setMode(MCP_NORMAL);  // Set CAN to normal mode
+    } else {
+      Serial.println("Error Initializing CAN Bus");
+      while (1);
+    }
 
-    Serial.println("MCP2515 Initialized Successfully!");
     binFile = SPIFFS.open("/test.bin", FILE_WRITE);
     if (!binFile) {
         Serial.println("Failed to open file for writing");
         return;
     }
+    Serial.println("Ready to receive firmware via CAN...");
 
 }
 
-void loop() {
-    if (!dataTransferStarted) {
-        receiveUDSRequest();
-    } else {
-        receiveData();
-    }
-}
-
-void receiveData() {
-    while (true) {
-        if (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
-            if (!timingStarted) {
-                startTime = micros();
-                timingStarted = true;
-            }
-
-            // Check for EOF indicator
-//            if (canMsg.can_dlc == 8 && memcmp(canMsg.data, "\xDE\xAD\xBE\xEF\xFE\xED\xBA\xAD", 8) == 0) {
-//                eofReceived = true;
-//                break;
-//            }
-
-            if (canMsg.can_dlc == 3 && memcmp(canMsg.data, "\x37\x02\x01", 3) == 0) {
-                eofReceived = true;
-                sendUDSTransferExitResponse();
-                break;
-            }
-
-            binFile.write(canMsg.data, canMsg.can_dlc);
-            bytesReceived += canMsg.can_dlc;
-
-            Serial.print("Bytes received: ");
-            Serial.println(bytesReceived);
-
-            delay(10); // Adjust delay as needed
+void receiveCANData() {
+  unsigned long canId;
+  unsigned char len = 0;
+  unsigned char buf[8];
+  
+  
+    while(true){
+      if (CAN_MSGAVAIL == CAN.checkReceive()) {
+        CAN.readMsgBuf(&canId, &len, buf);
+        
+       
+       
+        if(len == 3 && buf[0] == 0x37 && buf[1] == 0x02 && buf[2] == 0x01) {
+          eofReceived = true;
+          break;
         }
+
+         // Write received data to the firmware file in SPIFFS
+        binFile.write(buf, len);
+        bytesReceived += len;
+        // Log progress
+        Serial.print("Bytes received: ");
+        Serial.println(bytesReceived);
+        delay(10);
+      }
     }
-
-    // Finalize the file transfer and close the file
     binFile.close();
-    endTime = micros();
-    unsigned long elapsedTime = endTime - startTime;
-
-    Serial.print("Time taken to receive file: ");
-    Serial.print(elapsedTime / 1000000.0);
-    Serial.println(" seconds");
-
-    // Verify the actual file size
     File receivedFile = SPIFFS.open("/test.bin", FILE_READ);
     if (receivedFile) {
         unsigned long actualFileSize = receivedFile.size();
@@ -95,112 +87,90 @@ void receiveData() {
         // Start flashing if EOF was received
         if (eofReceived) {
             flashESP32();
+            dataTransferStarted = false;
         } else {
             Serial.println("EOF not received properly.");
         }
     } else {
         Serial.println("Failed to open received file for verification.");
     }
+  
 }
+void loop() {
 
-void receiveUDSRequest() {
-    if (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
-        if (canMsg.can_id == 0x7DF) {
-            if (canMsg.data[0] == 0x03 && canMsg.data[1] == 0x10 && canMsg.data[2] == 0x01) {
-                sendUDSExtendedSessionResponse();
-                Serial.println("UDS Extended Diagnostic Session Session Request valid, sending response...");
-            } else if (canMsg.data[0] == 0x85 && canMsg.data[1] == 0x02 && canMsg.data[2] == 0x01) {
-                sendUDSControlDTCSettingResponse();
-                Serial.println("UDS ControlDTCSetting Request valid, sending response...");
-            } else if(canMsg.data[0] == 0x02 && canMsg.data[1] == 0x10 && canMsg.data[2] == 0x01) {
-                sendUDSProgrammingSessionResponse();
-                Serial.println("UDS Programming Session Request valid, sending response...");
-            } else if (canMsg.data[0] == 0x02 && canMsg.data[1] == 0x27) { 
-                sendUDSSecurityAccessSeedResponse();
-                Serial.println("UDS Security Access Request received, sending seed...");
-            } else if(canMsg.data[0] == 0x06 && canMsg.data[1] == 0x27 && canMsg.data[2] == 0x02) {
-                if (validateSecurityKey(canMsg.data + 3)) {
-                    sendUDSPositiveResponse(0x02); 
-                    Serial.println("Security Access Key validated. Access granted.");
-                    // Proceed to the next step (e.g., allow data transfer)
-                } else {
-                    sendUDSNegativeResponse(0x27, 0x35);  
-                    Serial.println("Security Access Key validation failed. Access denied.");
-                }
-            } else if (canMsg.data[0] == 0x02 && canMsg.data[1] == 0x31 && canMsg.data[2] == 0x01) {
-                //formatSPIFFS();
-                dataTransferStarted = true;
-                sendUDSEraseMemoryResponse();
-                Serial.println("UDS Erase Memory Request valid, performing erase...");
-            }
-        }
-    }
-}
-
-void sendUDSProgrammingSessionResponse() {
-    unsigned char udsResponse[8] = {0x02, 0x50, 0x01};
-    canMsg.can_id = 0x7E8;
-    canMsg.can_dlc = 3;
-    memcpy(canMsg.data, udsResponse, 3);
-
-    mcp2515.sendMessage(&canMsg);
-    Serial.println("UDS Response sent");
+  if(!dataTransferStarted){
+    receiveUDSRequest();
+  } else {
+    receiveCANData();
+  }
+    
 }
 
 void sendUDSExtendedSessionResponse() {
-    unsigned char udsResponse[8] = {0x03, 0x50, 0x01};
-    canMsg.can_id = 0x7E8;
-    canMsg.can_dlc = 3;
-    memcpy(canMsg.data, udsResponse, 3);
-
-    mcp2515.sendMessage(&canMsg);
-    Serial.println("UDS Response sent");
+    byte udsRequest[3] = {0x02, 0x50, 0x03}; // Diagnostic Session Control (0x10), Default Session (0x01)
+    CAN.sendMsgBuf(0x7E8, 0, 3, udsRequest);
+    Serial.println("UDS Extended Diagnostic Session Response sent");
 }
 
+void sendUDSControlDTCSettingResponse() {
+    byte udsRequest[3] = {0x02, 0xC5, 0x01}; // 
+    CAN.sendMsgBuf(0x7E8, 0, 3, udsRequest);
+    Serial.println("UDS Control DTC Diagnostic Session Response sent");
+}
+
+void sendUDSCommunicationControlResponse() {
+    byte udsRequest[3] = {0x02, 0x71, 0x01}; // 
+    CAN.sendMsgBuf(0x7E8, 0, 3, udsRequest);
+    Serial.println("UDS Communication Control Response sent");
+}
+
+void sendUDSProgrammingSessionResponse() {
+    byte udsRequest[3] = {0x02, 0x50, 0x02}; // 
+    CAN.sendMsgBuf(0x7E8, 0, 3, udsRequest);
+    Serial.println("UDS Programming Session Response sent");
+}
+
+void sendUDSSecurityAccessResponse() {
+    byte udsRequest[2] = {0x02, 0x67}; // 
+    CAN.sendMsgBuf(0x7E8, 0, 2, udsRequest);
+    Serial.println("UDS Security Access Response sent");
+}
 
 void sendUDSSecurityAccessSeedResponse() {
     byte seed[4] = {0x01, 0x02, 0x03, 0x04};  // Example seed for security access
     byte udsResponse[6] = {0x67, 0x01, seed[0], seed[1], seed[2], seed[3]};
     
-    canMsg.can_id = 0x7E8;
-    canMsg.can_dlc = 6;
-    memcpy(canMsg.data, udsResponse, 6);
-    
-    mcp2515.sendMessage(&canMsg);
+    CAN.sendMsgBuf(0x7E8, 0, 6, udsResponse);
     Serial.println("UDS Security Access Seed Response sent");
 }
 
-
-void sendUDSControlDTCSettingResponse() {
-    unsigned char udsResponse[8] = {0xC5, 0x02, 0x01};
-    canMsg.can_id = 0x7E8;
-    canMsg.can_dlc = 3;
-    memcpy(canMsg.data, udsResponse, 3);
-
-    mcp2515.sendMessage(&canMsg);
-    Serial.println("UDS Control DTC Setting Response sent");
+void receiveUDSRequest() {
+  unsigned long canId;
+  unsigned char len = 0;
+  unsigned char buf[8];
+    if (CAN_MSGAVAIL == CAN.checkReceive()) {
+       CAN.readMsgBuf(&canId, &len, buf);
+            if (canId == 0x7DF && buf[0] == 0x02 && buf[1] == 0x10 && buf[2] == 0x03) {
+                Serial.println("UDS Extended Diagnostic Session Session Request valid, sending response...");
+                sendUDSExtendedSessionResponse();
+                //dataTransferStarted = true;
+            } else if (canId == 0x7DF && buf[0] == 0x02 && buf[1] == 0x85 && buf[2] == 0x01) {
+                Serial.println("UDS Control DTC Session Session Request valid, sending response...");
+                sendUDSControlDTCSettingResponse();
+            } else if (canId == 0x7DF && buf[0] == 0x02 && buf[1] == 0x31 && buf[2] == 0x01) {
+                Serial.println("UDS Communication Control Request valid, sending response...");
+                sendUDSCommunicationControlResponse();
+            } else if (canId == 0x7DF && buf[0] == 0x02 && buf[1] == 0x10 && buf[2] == 0x02) {
+                Serial.println("UDS Programming Session Request valid, sending response...");
+                sendUDSProgrammingSessionResponse();
+            } else if (canId == 0x7DF && buf[0] == 0x02 && buf[1] == 0x27) {
+                Serial.println("UDS Security Access Request valid, sending seed...");
+                sendUDSSecurityAccessResponse();
+                dataTransferStarted = true;
+            } 
+        }
+    
 }
-
-void sendUDSEraseMemoryResponse() {
-    unsigned char udsResponse[8] = {0x71, 0x03, 0x01};
-    canMsg.can_id = 0x7E8;
-    canMsg.can_dlc = 3;
-    memcpy(canMsg.data, udsResponse, 3);
-
-    mcp2515.sendMessage(&canMsg);
-    Serial.println("UDS Memory Erase Response sent");
-}
-
-void sendUDSTransferExitResponse() {
-    unsigned char udsResponse[8] = {0x77, 0x02, 0x01};
-    canMsg.can_id = 0x7E8;
-    canMsg.can_dlc = 3;
-    memcpy(canMsg.data, udsResponse, 3);
-
-    mcp2515.sendMessage(&canMsg);
-    Serial.println("UDS Transfer and Exit Response sent");
-}
-
 
 
 void formatSPIFFS() {
@@ -213,7 +183,7 @@ void formatSPIFFS() {
     if (SPIFFS.format()) {
         delay(15000);
         Serial.println("SPIFFS formatted successfully");
-        sendUDSEraseMemoryResponse();
+        //sendUDSEraseMemoryResponse();
     } else {
         Serial.println("SPIFFS formatting failed");
     }
@@ -267,19 +237,12 @@ bool validateSecurityKey(byte* receivedKey) {
 
 void sendUDSPositiveResponse(byte responseCode) {
     byte udsResponse[3] = {0x03, 0x67, responseCode};  // 0x67 for Security Access response
-    canMsg.can_id = 0x7E8;  // Response ID
-    canMsg.can_dlc = 3;
-    memcpy(canMsg.data, udsResponse, 3);
-    mcp2515.sendMessage(&canMsg);
+    CAN.sendMsgBuf(0x7E8, 0, 3, udsResponse);
     Serial.println("UDS Positive Response sent for Security Access granted.");
 }
 
 void sendUDSNegativeResponse(byte serviceId, byte errorCode) {
     byte udsResponse[3] = {0x7F, serviceId, errorCode};  // UDS Negative Response format
-    canMsg.can_id = 0x7E8;  // Response ID
-    canMsg.can_dlc = 3;
-    memcpy(canMsg.data, udsResponse, 3);
-    mcp2515.sendMessage(&canMsg);
+    CAN.sendMsgBuf(0x7E8, 0, 3, udsResponse);
     Serial.println("UDS Negative Response sent");
 }
-
